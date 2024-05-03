@@ -3,4 +3,4 @@
 	url = https://github.com/graphdeco-inria/gaussian-splatting
 [submodule "StyleGaussian"]
 	path = StyleGaussian
-	url = git@github.com:Kunhao-Liu/StyleGaussian.git
+	url = https://github.com/Kunhao-Liu/StyleGaussian.git
