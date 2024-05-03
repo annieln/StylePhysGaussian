@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("gaussian-splatting")
+sys.path.append("StyleGaussian")
 
 import argparse
 import math
@@ -37,6 +37,13 @@ from utils.transformation_utils import *
 from utils.camera_view_utils import *
 from utils.render_utils import *
 
+# Style transfer dependencies
+from PIL import Image
+from torchvision.transforms.functional import resize
+import torchvision.transforms as T
+from scene.VGG import VGGEncoder, normalize_vgg
+
+
 wp.init()
 wp.config.verify_cuda = True
 
@@ -70,6 +77,7 @@ def load_checkpoint(model_path, sh_degree=3, iteration=-1):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--style_path", type=str, required=None)
     parser.add_argument("--output_path", type=str, default=None)
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--output_ply", action="store_true")
@@ -82,6 +90,8 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.model_path):
         AssertionError("Model path does not exist!")
+    if not os.path.exists(args.style_path):
+        AssertionError("Style image path does not exist!")
     if not os.path.exists(args.config):
         AssertionError("Scene config does not exist!")
     if args.output_path is not None and not os.path.exists(args.output_path):
@@ -109,9 +119,25 @@ if __name__ == "__main__":
         else torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
     )
 
+    # read style image and extract features
+    vgg_encoder = VGGEncoder().cuda()
+
+    trans = T.Compose([T.Resize(size=(256,256)), T.ToTensor()])
+    style_img = trans(Image.open(style_img_path)).cuda()[None, :3, :, :]
+    style_img_features = vgg_encoder(normalize_vgg(style_img))
+    new_style_img = resize(style_img, (128,128))
+
+    # style transfer
+    transfered_features = gaussians.style_transfer(
+        gaussians.final_vgg_features.detach(), # point cloud features [N, C]
+        style_img_features.relu3_1,
+    )
+
+    override_color = gaussians.decoder(transfered_features)
+
     # init the scene
     print("Initializing scene and pre-processing...")
-    params = load_params_from_gs(gaussians, pipeline)
+    params = load_params_from_gs(gaussians, pipeline, override_color=override_color)
 
     init_pos = params["pos"]
     init_cov = params["cov3D_precomp"]
