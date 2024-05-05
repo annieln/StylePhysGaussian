@@ -357,7 +357,7 @@ if __name__ == "__main__":
     width = None
     for frame in tqdm(range(frame_num)):
         current_camera = get_camera_view(
-            model_path,
+            model.model_path,
             default_camera_index=camera_params["default_camera_index"],
             center_view_world_space=viewpoint_center_worldspace,
             observant_coordinates=observant_coordinates,
