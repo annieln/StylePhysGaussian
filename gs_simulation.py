@@ -50,6 +50,19 @@ wp.config.verify_cuda = True
 ti.init(arch=ti.cuda, device_memory_GB=8.0)
 
 
+class ModelParamsNoparse:
+    """Same as ModelParams but without argument parser."""
+
+    def __init__(self, args):
+        self.sh_degree = 3
+        self._source_path = ""
+        self._model_path = args.model_path
+        self._images = "images"
+        self._resolution = -1
+        self._white_background = args.white_bg
+        self.data_device = "cuda"
+        self.eval = False
+
 class PipelineParamsNoparse:
     """Same as PipelineParams but without argument parser."""
 
@@ -77,7 +90,7 @@ def load_checkpoint(model_path, sh_degree=3, iteration=-1):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--style_path", type=str, required=None)
+    parser.add_argument("--style_path", type=str)
     parser.add_argument("--output_path", type=str, default=None)
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--output_ply", action="store_true")
@@ -90,8 +103,9 @@ if __name__ == "__main__":
 
     if not os.path.exists(args.model_path):
         AssertionError("Model path does not exist!")
-    if not os.path.exists(args.style_path):
-        AssertionError("Style image path does not exist!")
+    if args.style_path:
+        if not os.path.exists(args.style_path):
+            AssertionError("Style image path does not exist!")
     if not os.path.exists(args.config):
         AssertionError("Scene config does not exist!")
     if args.output_path is not None and not os.path.exists(args.output_path):
@@ -109,31 +123,51 @@ if __name__ == "__main__":
 
     # load gaussians
     print("Loading gaussians...")
-    model_path = args.model_path
-    gaussians = load_checkpoint(model_path)
+    model = ModelParamsNoparse(args)
+
+    gaussians = GaussianModel(model.sh_degree)
+    ckpt_path = os.path.join(model.model_path, "chkpnt/gaussians.pth")
+    gaussians.restore(torch.load(ckpt_path), from_style_model=True)
+
     pipeline = PipelineParamsNoparse()
     pipeline.compute_cov3D_python = True
+
     background = (
         torch.tensor([1, 1, 1], dtype=torch.float32, device="cuda")
         if args.white_bg
         else torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
     )
 
+    # # load gaussians
+    # print("Loading gaussians...")
+    # model_path = args.model_path
+    # gaussians = load_checkpoint(model_path)
+    # pipeline = PipelineParamsNoparse()
+    # pipeline.compute_cov3D_python = True
+    # background = (
+    #     torch.tensor([1, 1, 1], dtype=torch.float32, device="cuda")
+    #     if args.white_bg
+    #     else torch.tensor([0, 0, 0], dtype=torch.float32, device="cuda")
+    # )
+
+    override_color = None
+
     # read style image and extract features
-    vgg_encoder = VGGEncoder().cuda()
+    if args.style_path:
+        vgg_encoder = VGGEncoder().cuda()
 
-    trans = T.Compose([T.Resize(size=(256,256)), T.ToTensor()])
-    style_img = trans(Image.open(style_img_path)).cuda()[None, :3, :, :]
-    style_img_features = vgg_encoder(normalize_vgg(style_img))
-    new_style_img = resize(style_img, (128,128))
+        trans = T.Compose([T.Resize(size=(256,256)), T.ToTensor()])
+        style_img = trans(Image.open(args.style_path)).cuda()[None, :3, :, :]
+        style_img_features = vgg_encoder(normalize_vgg(style_img))
+        new_style_img = resize(style_img, (128,128))
 
-    # style transfer
-    transfered_features = gaussians.style_transfer(
-        gaussians.final_vgg_features.detach(), # point cloud features [N, C]
-        style_img_features.relu3_1,
-    )
+        # style transfer
+        transfered_features = gaussians.style_transfer(
+            gaussians.final_vgg_features.detach(), # point cloud features [N, C]
+            style_img_features.relu3_1,
+        )
 
-    override_color = gaussians.decoder(transfered_features)
+        override_color = gaussians.decoder(transfered_features)
 
     # init the scene
     print("Initializing scene and pre-processing...")
@@ -376,7 +410,9 @@ if __name__ == "__main__":
                 opacity = torch.cat([opacity_render, unselected_opacity], dim=0)
                 shs = torch.cat([shs_render, unselected_shs], dim=0)
 
-            colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rot)
+            if colors_precomp is None:
+                colors_precomp = convert_SH(shs, current_camera, gaussians, pos, rot)
+            
             rendering, raddi = rasterize(
                 means3D=pos,
                 means2D=init_screen_points,
