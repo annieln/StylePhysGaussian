@@ -126,7 +126,7 @@ if __name__ == "__main__":
     model = ModelParamsNoparse(args)
 
     gaussians = GaussianModel(model.sh_degree)
-    ckpt_path = os.path.join(model.model_path, "chkpnt/gaussians.pth")
+    ckpt_path = os.path.join(model._model_path, "chkpnt/gaussians.pth")
     gaussians.restore(torch.load(ckpt_path), from_style_model=True)
 
     pipeline = PipelineParamsNoparse()
